@@ -1,0 +1,102 @@
+import cv2
+import numpy as np
+import pytesseract
+from IPython.display import display, clear_output
+import matplotlib.pyplot as plt
+
+# Set Tesseract path
+pytesseract.pytesseract.tesseract_cmd = "/opt/homebrew/bin/tesseract"
+
+# Initialize webcam
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    raise Exception("Error: Could not open webcam.")
+
+# Define color ranges for detection (HSV format)
+color_ranges = {
+    "Red": (np.array([136, 87, 111], np.uint8), np.array([180, 255, 255], np.uint8)),
+    "Green": (np.array([25, 52, 72], np.uint8), np.array([102, 255, 255], np.uint8)),
+    "Blue": (np.array([94, 80, 2], np.uint8), np.array([120, 255, 255], np.uint8))
+}
+
+min_object_area = 500  # Minimum object area threshold
+kernel = np.ones((3, 3), np.uint8)  # Smaller kernel for refined dilation
+
+try:
+    plt.figure(figsize=(10, 6))
+    print("Press 'c' to capture an image for analysis or 'q' to exit.")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Error: Could not read frame.")
+            break
+        
+        # Display real-time camera feed
+        cv2.imshow("Live Camera - Press 'c' to Capture", frame)
+        
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('c'):
+            print("Image captured! Processing...")
+            captured_frame = frame.copy()
+            break
+        elif key == ord('q'):
+            raise KeyboardInterrupt
+    
+    cap.release()
+    cv2.destroyAllWindows()
+    
+    # Convert captured image to HSV for color detection
+    hsv = cv2.cvtColor(captured_frame, cv2.COLOR_BGR2HSV)
+    detected_color = ""
+    detected_text = ""
+    
+    for color_name, (lower, upper) in color_ranges.items():
+        mask = cv2.inRange(hsv, lower, upper)
+        mask = cv2.dilate(mask, kernel)
+        
+        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > min_object_area:
+                x, y, w, h = cv2.boundingRect(cnt)
+                cv2.rectangle(captured_frame, (x, y), (x + w, y + h), (255, 255, 255), 2)
+                cv2.putText(captured_frame, f"{color_name} Color", (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                detected_color = color_name
+                
+                # Extract object region for text recognition
+                object_region = captured_frame[y:y + h, x:x + w]
+                gray = cv2.cvtColor(object_region, cv2.COLOR_BGR2GRAY)
+                gray = cv2.GaussianBlur(gray, (3, 3), 0)
+                thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                               cv2.THRESH_BINARY, 11, 2)
+
+                # OCR text detection with improved settings
+                custom_config = "--oem 3 --psm 6"
+                text = pytesseract.image_to_string(thresh, config=custom_config)
+                detected_text = text.strip()
+                
+                if detected_text:
+                    cv2.putText(captured_frame, f"Text: {detected_text}", (x, y + h + 20),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    
+    frame_rgb = cv2.cvtColor(captured_frame, cv2.COLOR_BGR2RGB)
+    
+    clear_output(wait=True)
+    plt.imshow(frame_rgb)
+    plt.axis('off')
+    plt.title("Color and Text Detection")
+    plt.show()
+    
+    if detected_color:
+        print(f"Detected Color: {detected_color}")
+    if detected_text:
+        print(f"Detected Text: {detected_text}")
+    
+except KeyboardInterrupt:
+    print("Stopping...")
+finally:
+    cap.release()
+    plt.close()
+    cv2.destroyAllWindows()
+    print("Webcam released")
